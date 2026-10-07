@@ -1,0 +1,29 @@
+services:
+
+  blue:
+    build:
+      context: ./app
+    image: releaseguard-app:v1
+    container_name: releaseguard-blue
+    environment:
+      APP_VERSION: v1
+    ports:
+      - "8000:8000"
+
+  green:
+    build:
+      context: ./app
+    image: releaseguard-app:v1
+    container_name: releaseguard-green
+    environment:
+      APP_VERSION: v2
+    ports:
+      - "8001:8000"
+
+  nginx:
+    image: nginx:alpine
+    container_name: releaseguard-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
