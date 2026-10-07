@@ -4,3 +4,4 @@ __pycache__/
 .env
 state/history/*.log
 
+state/deployment.json
