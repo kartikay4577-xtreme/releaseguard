@@ -1,3 +1,4 @@
+
 import argparse
 import logging
 import re
@@ -82,22 +83,26 @@ def deploy(image_tag):
 
     version = match.group(2)
 
-    # Serialize deployments. State must be read AFTER acquiring the lock.
+    # Serialize deployments. Read state only after acquiring the lock.
     with deployment_lock():
         return _deploy_locked(image_tag, version)
 
 
 def preflight_deployment(image_tag, version):
-    """Check deployment prerequisites without changing containers or traffic."""
+    """Check prerequisites without changing containers or traffic."""
     import subprocess
 
     try:
         state = get_state()
     except Exception as error:
-        raise RuntimeError(f"Cannot read valid deployment state: {error}") from error
+        raise RuntimeError(
+            f"Cannot read valid deployment state: {error}"
+        ) from error
 
     if state.get("active") not in SLOTS or not state.get("version"):
-        raise RuntimeError("Deployment state has an invalid active slot or version")
+        raise RuntimeError(
+            "Deployment state has an invalid active slot or version"
+        )
 
     try:
         result = subprocess.run(
@@ -109,7 +114,9 @@ def preflight_deployment(image_tag, version):
             timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError(f"Could not check Docker image: {error}") from error
+        raise RuntimeError(
+            f"Could not check Docker image: {error}"
+        ) from error
 
     if result.returncode != 0:
         raise ValueError(
@@ -118,7 +125,6 @@ def preflight_deployment(image_tag, version):
         )
 
     return state
-
 
 
 def _deploy_locked(image_tag, version):
@@ -168,7 +174,7 @@ def _deploy_locked(image_tag, version):
         if not validate_slot(target, version):
             raise RuntimeError("Target failed health/version validation")
 
-        # Set this before switching because Nginx may change partially.
+        # Nginx may change partially, so mark the attempt before switching.
         switch_attempted = True
         logger.info("Target validated; switching Nginx traffic")
         switch_to(target)
@@ -183,7 +189,11 @@ def _deploy_locked(image_tag, version):
 
         try:
             record_deployment(
-                active, target, version, True, "deployment successful"
+                active,
+                target,
+                version,
+                True,
+                "deployment successful",
             )
         except OSError as error:
             logger.warning("Could not record success history: %s", error)
@@ -193,6 +203,10 @@ def _deploy_locked(image_tag, version):
 
     except Exception as error:
         logger.error("Deployment failed: %s", error)
+
+        # Preserve the original error and separately track rollback failure.
+        failure_detail = str(error)
+        rollback_error_detail = None
 
         if switch_attempted:
             try:
@@ -215,16 +229,29 @@ def _deploy_locked(image_tag, version):
                 )
 
             except Exception as rollback_error:
+                rollback_error_detail = str(rollback_error)
+
                 logger.critical(
                     "Traffic restoration could not be verified: %s",
                     rollback_error,
                 )
 
+                failure_detail += (
+                    f"; rollback failed: {rollback_error_detail}"
+                )
+
         try:
-            record_deployment(active, target, version, False, str(error))
+            record_deployment(
+                active,
+                target,
+                version,
+                False,
+                failure_detail,
+            )
         except OSError as history_error:
             logger.error(
-                "Could not record failure history: %s", history_error
+                "Could not record failure history: %s",
+                history_error,
             )
 
         return False
@@ -247,6 +274,7 @@ def main():
         raise SystemExit(1)
 
     raise SystemExit(0 if success else 1)
+
 
 if __name__ == "__main__":
     main()
