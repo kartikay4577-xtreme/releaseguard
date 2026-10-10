@@ -9,6 +9,7 @@ class DeploymentControllerTests(unittest.TestCase):
     def make_mocks(self):
         names = (
             "get_state",
+            "preflight_deployment",
             "create_or_replace_slot",
             "validate_slot",
             "switch_to",
@@ -24,6 +25,10 @@ class DeploymentControllerTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
         mocks["get_state"].return_value = {
+            "active": "blue",
+            "version": "v1",
+        }
+        mocks["preflight_deployment"].return_value = {
             "active": "blue",
             "version": "v1",
         }
