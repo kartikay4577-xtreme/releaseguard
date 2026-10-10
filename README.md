@@ -1,15 +1,16 @@
 # ReleaseGuard
+
 ### Zero-Downtime Docker Deployment and Automatic Rollback
 
-ReleaseGuard is a Docker deployment automation project that demonstrates blue-green deployments, application health verification, traffic switching, rollback handling, deployment state tracking, and concurrency protection.
+ReleaseGuard is a DevOps/SRE learning project that automates blue-green Docker deployments using Python, Docker, FastAPI, and Nginx. It demonstrates release validation, traffic switching, rollback verification, deployment state tracking, concurrency protection, and automated testing.
 
-It is designed as a practical DevOps/SRE learning project using Docker, Python, FastAPI, Nginx, and GitHub Actions.
+**Repository:** [github.com/kartikay4577-xtreme/releaseguard](https://github.com/kartikay4577-xtreme/releaseguard)
 
 ## Problem Statement
 
-Replacing a running application during deployment can introduce downtime or expose users to an unhealthy release. A deployment process also needs to avoid recording a release as successful before the new version has been verified.
+Deploying a new application version can introduce downtime or expose users to an unhealthy release. A reliable deployment process should validate the candidate release, verify public traffic after switching, and attempt to restore the previous version if deployment fails.
 
-ReleaseGuard addresses these concerns by deploying to an inactive application slot, validating the candidate, switching traffic through Nginx, and checking the public health endpoint before recording success.
+ReleaseGuard implements this workflow by deploying to the inactive application slot, validating its health and version, switching traffic through Nginx, and recording the result.
 
 ## Architecture
 
@@ -19,46 +20,50 @@ flowchart TD
     B --> C[Preflight Validation]
     C --> D[Deployment Lock]
     D --> E[Inactive Docker Slot]
-    E --> F[Health and Version Validation]
-    F -->|Valid| G[Nginx Traffic Switch]
-    G --> H[Public Health Verification]
-    H -->|Success| I[Save Deployment State]
-    H -->|Failure| J[Restore Previous Traffic]
-    F -->|Invalid| K[Abort Deployment]
-    J --> L[Verify Rollback]
-    I --> M[Deployment History]
-    K --> M
-    L --> M
-    N[GitHub Actions] --> O[Automated Unit Tests]
+    E --> F{Health and Version Valid?}
+    F -->|No| K[Abort and Record Failure]
+    F -->|Yes| G[Switch Nginx Traffic]
+    G --> H{Public Health Check}
+    H -->|Pass| I[Save Deployment State]
+    H -->|Fail| J[Restore Previous Traffic]
+    J --> L{Rollback Verified?}
+    L -->|Yes| M[Record Failed Deployment]
+    L -->|No| N[Record Rollback Failure]
+    I --> O[Deployment History]
+    K --> O
+    M --> O
+    N --> O
+    P[GitHub Actions] --> Q[Run Unit Tests]
 ```
 
-See [the architecture diagram source](docs/architecture.mmd) for the editable Mermaid version.
+See [`docs/architecture.mmd`](docs/architecture.mmd) for the editable Mermaid diagram.
 
-## Main Features
+## Features
 
 - **Blue-green deployment:** maintains separate blue and green application slots.
-- **Preflight checks:** validates deployment state and checks that the requested image exists locally before replacing a slot.
-- **Health and version validation:** checks the candidate application before switching traffic.
-- **Nginx traffic routing:** routes requests to the active application slot.
-- **Automatic rollback handling:** attempts to restore the previous traffic route when post-switch verification fails.
-- **Deployment state tracking:** records the active slot and deployed version.
+- **Preflight validation:** checks saved deployment state and confirms the requested Docker image exists locally.
+- **Health and version validation:** verifies the candidate application before routing traffic to it.
+- **Nginx traffic switching:** changes the active application route through the Nginx configuration.
+- **Automatic rollback handling:** attempts to restore the previous route when post-switch verification fails.
+- **Rollback verification:** checks whether traffic has returned to the previously recorded version and records rollback failures.
+- **Deployment state tracking:** stores the active slot and version.
 - **Deployment history:** records successful and failed deployment attempts.
-- **Concurrency protection:** uses a file lock to serialize deployment operations.
-- **Automated tests:** uses Python's built-in `unittest` framework.
-- **Continuous integration:** GitHub Actions runs the unit tests on pushes and pull requests to `main`.
+- **Concurrency protection:** uses a Linux file lock to serialize cooperating deployment processes.
+- **Automated testing:** tests deployment behavior, health checks, preflight validation, and deployment locking.
+- **Continuous integration:** GitHub Actions runs the automated test suite.
 
 ## Technology Stack
 
 | Technology | Purpose |
 |---|---|
-| Docker | Application containers and images |
-| Docker Compose | Supporting service orchestration |
+| Docker | Application images and containers |
+| Docker Compose | Nginx service configuration |
 | Python | Deployment controller and automation |
-| FastAPI | Demonstration application and health endpoint |
-| Nginx | Traffic routing between application slots |
-| Bash | Terminal-based operations |
+| FastAPI | Demo application and health endpoint |
+| Nginx | Reverse proxy and traffic routing |
+| `unittest` and mocks | Automated testing |
 | Git and GitHub | Version control and repository hosting |
-| GitHub Actions | Automated test execution |
+| GitHub Actions | Continuous integration |
 
 ## Project Structure
 
@@ -66,68 +71,75 @@ See [the architecture diagram source](docs/architecture.mmd) for the editable Me
 ReleaseGuard/
 ├── app/
 │   ├── app.py
-│   └── Dockerfile
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   └── requirements.txt
 ├── controller/
 │   ├── deployer.py
-│   ├── docker_manager.py
 │   ├── deployment_lock.py
+│   ├── docker_manager.py
+│   ├── docker_test.py
+│   ├── health.py
+│   ├── history.py
+│   ├── nginx_manager.py
 │   ├── state_manager.py
 │   ├── status.py
+│   ├── __init__.py
 │   └── requirements.txt
 ├── nginx/
 │   └── nginx.conf
-├── scripts/
 ├── tests/
 │   ├── test_deployer.py
 │   ├── test_deployment_lock.py
 │   ├── test_health.py
 │   └── test_preflight.py
-├── state/
-│   └── history/
 ├── docs/
 │   └── architecture.mmd
-├── compose.yaml
-└── .github/
-    └── workflows/
-        └── ci.yml
+├── state/
+│   └── deployment.json
+├── docker-compose.yml
+├── .gitignore
+└── README.md
 ```
 
-Runtime deployment state and history are local files and are excluded from Git using `.gitignore`.
+Runtime state, lock files, and deployment history are local operational data and should not be committed.
 
-## How Deployment Works
+## Deployment Workflow
 
-1. The operator requests a tagged Docker image.
+1. The operator supplies a tagged Docker image to the deployment controller.
 2. The controller validates the image tag and acquires the deployment lock.
-3. It checks the recorded deployment state and confirms the image exists locally.
-4. It identifies the inactive application slot and replaces that slot's container.
-5. The controller checks the candidate's health and expected version.
-6. If validation succeeds, the controller switches Nginx traffic to the candidate.
-7. It verifies the application's public health endpoint.
-8. On success, it saves the new active slot and version and records the result.
-9. If a later deployment step fails, it attempts to restore the previous traffic route and verifies the rollback.
+3. Preflight checks validate the saved state and confirm that the image exists locally.
+4. The controller identifies the inactive slot and creates or replaces its container.
+5. The candidate is checked for health and the expected application version.
+6. If validation passes, the controller switches Nginx traffic to the candidate.
+7. The public health endpoint is checked against the requested version.
+8. On success, the controller saves the new active slot and version and records the successful deployment.
+9. If a later step fails, the controller attempts to restore the previous traffic route and verify the previous version.
+10. If rollback cannot be verified, the failure is reported and appended to the deployment history.
 
-A rollback attempt is not the same as a guaranteed rollback: if restoration cannot be verified, the controller reports that failure.
+A rollback attempt is not a guarantee of recovery. ReleaseGuard reports when restoration cannot be verified.
 
 ## Prerequisites
 
-- Linux environment with Docker Engine installed and running
-- Docker Compose plugin, if using the supplied Compose configuration
-- Python 3.9 or a compatible environment for the project
+- Linux environment
+- Docker Engine installed and running
+- Docker access permissions
+- Python 3.9 or a compatible environment
 - Git
-- Permission to access the Docker daemon
+- Docker Compose plugin for the supplied Compose configuration
 
-The controller uses Linux file locking (`fcntl`) for deployment serialization.
+The deployment lock uses Linux `fcntl` file locking and is intended for cooperating processes on the same host.
 
 ## Setup
 
-Clone the repository and enter the project directory:
+Clone the repository:
 
 ```bash
 git clone https://github.com/kartikay4577-xtreme/releaseguard.git
 cd releaseguard
 ```
 
-Create and activate a Python virtual environment:
+Create and activate a virtual environment:
 
 ```bash
 python3 -m venv .venv
@@ -141,83 +153,102 @@ python -m pip install --upgrade pip
 pip install -r controller/requirements.txt
 ```
 
-Ensure Docker is running and inspect the available images:
+Check Docker availability and existing images:
 
 ```bash
 docker info
 docker image ls
 ```
 
-Build the application image if required, using the repository's application Dockerfile and the intended image tag. Confirm that the image tag matches the one supplied to the deployment controller.
+The deployment controller expects the requested application image to exist locally. Build the image using `app/Dockerfile` and the tag appropriate for the release you intend to deploy.
 
-Review `compose.yaml` and `nginx/nginx.conf` before starting or changing services.
+Before starting or changing services, review `docker-compose.yml`, `nginx/nginx.conf`, and the deployment controller configuration. Do not start a second copy of services that are already running.
 
-## Read-Only Inspection Commands
+## Operational Commands
 
-Show saved deployment state and container status:
+### Inspect deployment status
 
 ```bash
 python -m controller.status status
 ```
 
-Show the latest 10 deployment history entries:
+### View deployment history
 
 ```bash
-python -m controller.status history
+python -m controller.status history --limit 10
 ```
 
-Show the latest 20 entries:
+Change `10` to a larger number to inspect more entries.
+
+### Check the public health endpoint
+
+When the local deployment is running:
 
 ```bash
-python -m controller.status history --limit 20
+curl -i --max-time 5 http://127.0.0.1:8080/health
 ```
 
-## Run the Unit Tests
+A healthy response includes a status and application version, for example:
 
-Run all tests without deploying or changing application containers:
+```json
+{
+  "status": "healthy",
+  "version": "v2"
+}
+```
+
+The expected version depends on the currently active deployment.
+
+## Testing
+
+Run the complete unit test suite:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-Compile the controller modules:
+Compile the Python modules:
 
 ```bash
 python -m py_compile controller/*.py
 ```
 
-Check for whitespace errors in the Git diff:
+Check the Git diff for whitespace errors:
 
 ```bash
 git diff --check
 ```
 
-GitHub Actions also runs the test suite for pushes and pull requests targeting `main`.
+The unit tests use mocks to exercise controller behavior without requiring each test to perform a real deployment. Passing unit tests do not, by themselves, prove that every failure scenario has been tested against live Docker and Nginx services.
 
-## Configuration and Runtime Data
+GitHub Actions provides an additional automated CI check. See the repository's Actions tab for individual workflow results.
 
-- `state/deployment.json` stores the active slot and version.
-- `state/history/deployments.log` stores deployment history.
-- `state/deployment.lock` coordinates concurrent controller invocations.
-- `.gitignore` excludes local runtime state from version control.
+## Runtime State and History
 
-Keep runtime state and history backed up if they are important to your environment. This implementation uses local files; it does not provide distributed locking or replicated state storage.
+The controller uses local files for operational state:
+
+- `state/deployment.json` — active slot and deployed version.
+- `state/history/deployments.log` — deployment attempts and outcomes.
+- `state/deployment.lock` — deployment serialization lock.
+
+The `.gitignore` configuration excludes runtime state from version control. Back up these files if they are important to your environment. Avoid manually editing deployment state while deployments are running.
 
 ## Current Scope and Limitations
 
 ReleaseGuard is a demonstration project, not a complete production deployment platform.
 
 - Image preflight checks local image availability, not image provenance or vulnerability status.
-- Local file locking protects cooperating controller processes on the same Linux host; it is not a distributed lock.
-- State and history are local files, not a replicated database.
-- Rollback depends on the previous application and traffic route being recoverable and verifiable.
+- File locking is local to cooperating processes; it is not a distributed lock.
+- Deployment state and history are local files rather than replicated storage.
+- Rollback depends on the previous application and traffic route remaining recoverable.
+- Unit tests do not replace integration tests against real Docker and Nginx services.
 - Production adoption would require additional security controls, monitoring, access management, secret handling, and environment-specific testing.
 
 ## Skills Demonstrated
 
-- Docker container lifecycle and image management
+- Docker image and container lifecycle management
 - Blue-green deployment concepts
-- Reverse proxy and traffic routing with Nginx
+- Nginx reverse proxy and traffic routing
 - Python automation and subprocess handling
 - Health checks and release validation
 - Failure handling and rollback verification
@@ -228,16 +259,15 @@ ReleaseGuard is a demonstration project, not a complete production deployment pl
 ## Future Improvements
 
 - Image vulnerability scanning and digest-based releases
-- Deployment metrics and structured JSON logs
+- Structured JSON logs and deployment metrics
 - Configurable health-check retries and timeouts
-- Persistent, centralized state and history
-- Integration tests using an isolated Docker environment
+- Persistent or centralized deployment state
+- Integration tests in an isolated Docker environment
 - Deployment approvals and environment-specific configuration
 
 ## Author
 
 **Kartikay Yadav**
-
-B.Tech Computer Science and Engineering
+B.Tech, Computer Science and Engineering
 
 GitHub: [kartikay4577-xtreme](https://github.com/kartikay4577-xtreme)
