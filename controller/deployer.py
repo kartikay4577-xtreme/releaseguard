@@ -13,6 +13,7 @@ from .docker_manager import (
 from .health import check_health
 from .nginx_manager import switch_to
 from .state_manager import get_state, save_state
+from .deployment_lock import deployment_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 HISTORY_FILE = PROJECT_ROOT / "state" / "history" / "deployments.log"
@@ -80,6 +81,13 @@ def deploy(image_tag):
         raise ValueError("Use a tagged image, e.g. releaseguard-app:v2")
 
     version = match.group(2)
+
+    # Serialize deployments. State must be read AFTER acquiring the lock.
+    with deployment_lock():
+        return _deploy_locked(image_tag, version)
+
+
+def _deploy_locked(image_tag, version):
     state = get_state()
     active = state["active"]
     target = get_inactive_slot(active)
@@ -100,8 +108,7 @@ def deploy(image_tag):
         if not validate_slot(target, version):
             raise RuntimeError("Target failed health/version validation")
 
-        # Mark the switch as attempted BEFORE calling switch_to.
-        # The Nginx command may partially change configuration before failing.
+        # Set this before switching because Nginx may change partially.
         switch_attempted = True
         logger.info("Target validated; switching Nginx traffic")
         switch_to(target)
@@ -132,8 +139,6 @@ def deploy(image_tag):
                 logger.info("Restoring traffic to %s", active)
                 switch_to(active)
 
-                # Verify the actual public traffic path, not just the
-                # old container's individual health endpoint.
                 if not check_health(
                     TRAFFIC_HEALTH_URL,
                     expected_version=state["version"],
@@ -158,10 +163,11 @@ def deploy(image_tag):
         try:
             record_deployment(active, target, version, False, str(error))
         except OSError as history_error:
-            logger.error("Could not record failure history: %s", history_error)
+            logger.error(
+                "Could not record failure history: %s", history_error
+            )
 
         return False
-
 
 def main():
     parser = argparse.ArgumentParser(
