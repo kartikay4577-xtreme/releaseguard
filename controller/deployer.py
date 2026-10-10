@@ -120,8 +120,35 @@ def preflight_deployment(image_tag, version):
     return state
 
 
+
 def _deploy_locked(image_tag, version):
-    state = preflight_deployment(image_tag, version)
+    try:
+        state = preflight_deployment(image_tag, version)
+    except Exception as error:
+        logger.error("Deployment preflight failed: %s", error)
+
+        try:
+            current_state = get_state()
+            active = current_state.get("active", "unknown")
+        except Exception:
+            active = "unknown"
+
+        try:
+            record_deployment(
+                active,
+                "unknown",
+                version,
+                False,
+                f"preflight failed: {error}",
+            )
+        except OSError as history_error:
+            logger.error(
+                "Could not record preflight failure: %s",
+                history_error,
+            )
+
+        return False
+
     active = state["active"]
     target = get_inactive_slot(active)
     switch_attempted = False
@@ -202,6 +229,7 @@ def _deploy_locked(image_tag, version):
 
         return False
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Deploy a versioned ReleaseGuard Docker image"
@@ -219,7 +247,6 @@ def main():
         raise SystemExit(1)
 
     raise SystemExit(0 if success else 1)
-
 
 if __name__ == "__main__":
     main()

@@ -56,6 +56,36 @@ class PreflightTests(unittest.TestCase):
 
         mock_run.assert_not_called()
 
+    @patch("controller.deployer.record_deployment")
+    @patch("controller.deployer.get_state")
+    @patch("controller.deployer.preflight_deployment")
+    def test_preflight_failure_is_recorded(
+        self, mock_preflight, mock_state, mock_record
+    ):
+        mock_state.return_value = {
+            "active": "green",
+            "version": "v2",
+        }
+        mock_preflight.side_effect = ValueError(
+            "Docker image is not available locally"
+        )
+
+        with patch("controller.deployer.create_or_replace_slot") as mock_create:
+            result = deployer._deploy_locked(
+                "releaseguard-app:missing", "missing"
+            )
+
+        self.assertFalse(result)
+        mock_create.assert_not_called()
+        mock_record.assert_called_once_with(
+            "green",
+            "unknown",
+            "missing",
+            False,
+            "preflight failed: Docker image is not available locally",
+        )
+
+
 
 if __name__ == "__main__":
     unittest.main()
