@@ -16,14 +16,26 @@ def run_docker_command(command):
 
     if result.returncode != 0:
         raise RuntimeError(
-            result.stderr.strip() or result.stdout.strip()
+            result.stderr.strip()
+            or result.stdout.strip()
             or "Docker command failed"
         )
 
     return result
 
 
+def reload_nginx():
+    """Validate the mounted configuration and reload Nginx."""
+    run_docker_command([
+        "docker", "exec", NGINX_CONTAINER, "nginx", "-t"
+    ])
+    run_docker_command([
+        "docker", "exec", NGINX_CONTAINER, "nginx", "-s", "reload"
+    ])
+
+
 def switch_to(slot):
+    """Switch Nginx traffic and report any recovery failure."""
     if slot not in ("blue", "green"):
         raise ValueError("Slot must be blue or green")
 
@@ -48,28 +60,24 @@ http {{
 
     try:
         NGINX_CONFIG.write_text(new_config, encoding="utf-8")
-
-        run_docker_command([
-            "docker", "exec", NGINX_CONTAINER, "nginx", "-t"
-        ])
-        run_docker_command([
-            "docker", "exec", NGINX_CONTAINER, "nginx", "-s", "reload"
-        ])
+        reload_nginx()
 
     except Exception as error:
         try:
             NGINX_CONFIG.write_text(
-                previous_config, encoding="utf-8"
+                previous_config,
+                encoding="utf-8",
             )
-            run_docker_command([
-                "docker", "exec", NGINX_CONTAINER, "nginx", "-t"
-            ])
-            run_docker_command([
-                "docker", "exec", NGINX_CONTAINER, "nginx", "-s", "reload"
-            ])
-        except Exception:
-            pass
+            reload_nginx()
+
+        except Exception as recovery_error:
+            raise RuntimeError(
+                f"Could not switch traffic to {slot}: {error}. "
+                "Restoring the previous Nginx configuration also failed: "
+                f"{recovery_error}"
+            ) from error
 
         raise RuntimeError(
-            f"Could not switch traffic to {slot}: {error}"
+            f"Could not switch traffic to {slot}: {error}. "
+            "The previous Nginx configuration was restored and reloaded."
         ) from error
