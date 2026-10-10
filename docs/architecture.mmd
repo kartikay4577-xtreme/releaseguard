@@ -1,0 +1,19 @@
+flowchart TD
+    A["Operator / CLI"] --> B["Python Deployment Controller"]
+    B --> C["Preflight Validation"]
+    C --> D["Deployment Lock"]
+    D --> E["Inactive Docker Slot"]
+    E --> F{"Health and Version Valid?"}
+    F -->|No| K["Abort and Record Failure"]
+    F -->|Yes| G["Switch Nginx Traffic"]
+    G --> H{"Public Health Check"}
+    H -->|Pass| I["Save Active Slot and Version"]
+    H -->|Fail| J["Restore Previous Traffic"]
+    J --> L{"Rollback Verified?"}
+    L -->|Yes| M["Record Failed Deployment"]
+    L -->|No| N["Report Rollback Failure"]
+    I --> O["Deployment History"]
+    K --> O
+    M --> O
+    N --> O
+    P["GitHub Actions"] --> Q["Run Unit Tests"]

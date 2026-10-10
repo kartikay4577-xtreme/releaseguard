@@ -87,8 +87,41 @@ def deploy(image_tag):
         return _deploy_locked(image_tag, version)
 
 
+def preflight_deployment(image_tag, version):
+    """Check deployment prerequisites without changing containers or traffic."""
+    import subprocess
+
+    try:
+        state = get_state()
+    except Exception as error:
+        raise RuntimeError(f"Cannot read valid deployment state: {error}") from error
+
+    if state.get("active") not in SLOTS or not state.get("version"):
+        raise RuntimeError("Deployment state has an invalid active slot or version")
+
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image_tag],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"Could not check Docker image: {error}") from error
+
+    if result.returncode != 0:
+        raise ValueError(
+            f"Docker image '{image_tag}' is not available locally. "
+            "Build or pull it before deploying."
+        )
+
+    return state
+
+
 def _deploy_locked(image_tag, version):
-    state = get_state()
+    state = preflight_deployment(image_tag, version)
     active = state["active"]
     target = get_inactive_slot(active)
     switch_attempted = False
